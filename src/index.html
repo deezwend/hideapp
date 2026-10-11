@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HideApp</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div class="titlebar-brand"><img src="../assets/icon.png" alt="" aria-hidden="true"></div>
+    <div class="titlebar-drag" aria-hidden="true"></div>
+    <div id="search-bar" class="titlebar-search" role="search" hidden>
+      <input id="app-search" type="search" placeholder="Uygulama ara..." data-i18n-placeholder="searchPlaceholder" aria-label="Gizlenen uygulamalarda ara" data-i18n-aria-label="searchLabel" aria-controls="windows" autocomplete="off" spellcheck="false">
+      <button id="search-prev" aria-label="Önceki eşleşen uygulama" data-i18n-aria-label="searchPrevious" title="Önceki eşleşme (Shift + Enter)" data-i18n-title="searchPreviousTip" disabled><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m2 8 4-4 4 4"/></svg></button>
+      <button id="search-next" aria-label="Sonraki eşleşen uygulama" data-i18n-aria-label="searchNext" title="Sonraki eşleşme (Enter)" data-i18n-title="searchNextTip" disabled><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m2 4 4 4 4-4"/></svg></button>
+      <button id="search-close" aria-label="Aramayı kapat" data-i18n-aria-label="searchClose" title="Aramayı kapat (Esc)" data-i18n-title="searchCloseTip"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m2 2 8 8M10 2l-8 8"/></svg></button>
+    </div>
+    <nav class="window-controls" aria-label="Pencere kontrolleri" data-i18n-aria-label="windowControls">
+      <button id="appearance-open" aria-label="Görünüm ayarları" data-i18n-aria-label="appearance" title="Görünüm ayarları" data-i18n-title="appearance"><svg viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.5"/><circle cx="11" cy="8" r="1.5"/><circle cx="6" cy="12" r="1.5"/></svg></button>
+      <button id="minimize" aria-label="Simge durumuna küçült" data-i18n-aria-label="minimize"><svg viewBox="0 0 12 12"><path d="M1 6h10"/></svg></button>
+      <button id="maximize" aria-label="Büyüt" data-i18n-aria-label="maximize"><svg viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9"/></svg></button>
+      <button id="close" aria-label="Sistem tepsisine küçült" data-i18n-aria-label="trayMinimize" title="Sistem tepsisine küçült" data-i18n-title="trayMinimize"><svg viewBox="0 0 12 12"><path d="m2 2 8 8M10 2l-8 8"/></svg></button>
+    </nav>
+  </header>
+  <main>
+    <section class="activation">
+      <label class="toggle-label" for="enabled"><input type="checkbox" id="enabled" disabled><span class="switch" aria-hidden="true"></span><span><strong data-i18n="enableHiding">Uygulamaları gizlemeyi aktifleştir</strong><small><span data-i18n="shortcutPrefix">Kapatma düğmesi üzerinde</span> <kbd>Shift</kbd> + <kbd data-i18n="rightClick">sağ tık</kbd></small></span></label>
+    </section>
+    <div id="error" class="error" role="alert" hidden></div>
+    <section class="list-section">
+      <div class="list-heading"><h2><span data-i18n="hiddenApps">Gizlenen uygulamalar</span> <span id="count">0</span></h2><button id="restore-all" class="text-button" disabled><span data-i18n="showAll">Tümünü göster</span> <span aria-hidden="true">↗</span></button></div>
+      <div class="table-container">
+        <div class="table-surface">
+          <table><thead><tr><th scope="col" data-i18n="columnApp">UYGULAMA</th><th scope="col" data-i18n="columnStatus">DURUM</th><th scope="col" data-i18n="columnDuration">ŞU SÜREDİR GİZLİ</th><th scope="col"><span class="sr-only" data-i18n="columnAction">İşlem</span></th></tr></thead><tbody id="windows"></tbody></table>
+          <div id="empty" class="empty"><div class="empty-icon" aria-hidden="true">▤</div><h3 data-i18n="empty">Henüz gizlenen uygulama yok</h3></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <dialog id="appearance-dialog" aria-labelledby="appearance-title">
+    <div class="dialog-heading"><div><h2 id="appearance-title" data-i18n="appearanceTitle">Görünümü özelleştir</h2><p data-i18n="appearanceDescription">Kendi tarzını seç. Değişiklikler anında uygulanır.</p></div><button id="appearance-close" class="icon-button" aria-label="Görünüm ayarlarını kapat" data-i18n-aria-label="appearanceClose">×</button></div>
+    <div class="settings-content">
+      <label class="setting-field" for="theme-mode"><span data-i18n="themeMode">Tema modu</span><select id="theme-mode"><option value="light" data-i18n="lightTheme">Açık tema (varsayılan)</option><option value="dark" data-i18n="darkTheme">Koyu tema</option></select></label>
+      <fieldset class="palette-fieldset"><legend data-i18n="palette">Renk paleti</legend><div class="palette-grid">
+        <label class="palette-option"><input type="radio" name="palette" value="orange"><span class="palette-card"><span class="swatch swatch-orange"></span><span data-i18n="orange">Turuncu</span></span></label>
+        <label class="palette-option"><input type="radio" name="palette" value="ocean"><span class="palette-card"><span class="swatch swatch-ocean"></span><span data-i18n="ocean">Okyanus</span></span></label>
+        <label class="palette-option"><input type="radio" name="palette" value="teal"><span class="palette-card"><span class="swatch swatch-teal"></span><span data-i18n="teal">Turkuaz</span></span></label>
+        <label class="palette-option"><input type="radio" name="palette" value="forest"><span class="palette-card"><span class="swatch swatch-forest"></span><span data-i18n="forest">Orman</span></span></label>
+        <label class="palette-option"><input type="radio" name="palette" value="crimson"><span class="palette-card"><span class="swatch swatch-crimson"></span><span data-i18n="crimson">Kırmızı</span></span></label>
+        <label class="palette-option"><input type="radio" name="palette" value="slate"><span class="palette-card"><span class="swatch swatch-slate"></span><span data-i18n="slate">Grafit</span></span></label>
+      </div></fieldset>
+      <label class="setting-field" for="font"><span data-i18n="font">Yazı tipi</span><select id="font"><option value="segoe" data-i18n="defaultFont">Segoe UI (varsayılan)</option><option value="arial">Arial</option><option value="tahoma">Tahoma</option><option value="verdana">Verdana</option><option value="consolas">Consolas</option></select></label>
+      <div class="setting-field"><label for="textSize"><span data-i18n="textSize">Yazı boyutu</span><output id="textSize-value" for="textSize">100%</output></label><input id="textSize" type="range" min="85" max="140" step="5" value="100"><small data-i18n="textSizeHint">Metinleri bağımsız olarak küçült veya büyüt.</small></div>
+      <div class="setting-field"><label for="objectSize"><span data-i18n="objectSize">Arayüz öğelerinin büyüklüğü</span><output id="objectSize-value" for="objectSize">100%</output></label><input id="objectSize" type="range" min="85" max="130" step="5" value="100"><small data-i18n="objectSizeHint">Düğmeler, ikonlar, boşluklar ve satır yükseklikleri.</small></div>
+      <div class="setting-field"><label for="radius"><span data-i18n="radius">Köşe yuvarlaklığı</span><output id="radius-value" for="radius">12 px</output></label><input id="radius" type="range" min="0" max="20" step="1" value="12"><small data-i18n="radiusHint">Düz köşelerden yuvarlatılmış kartlara.</small></div>
+      <label class="language-setting" for="app-language"><span data-i18n="language">Uygulama dili</span><select id="app-language"><option value="tr" lang="tr">Türkçe</option><option value="en" lang="en">English</option></select></label>
+    </div>
+    <div class="dialog-footer"><p id="appearance-status" role="status" data-i18n="settingsStored">Ayarlar bu bilgisayarda saklanır.</p><button id="appearance-reset" class="restore-button" data-i18n="reset">Varsayılana sıfırla</button></div>
+  </dialog>
+  <script src="i18n.js"></script>
+  <script src="language.js"></script>
+  <script src="theme.js"></script>
+  <script src="appearance.js"></script>
+  <script src="duration.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

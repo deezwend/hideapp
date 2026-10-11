@@ -1,0 +1,40 @@
+{
+  "name": "hideapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows pencere gizleme uygulaması; Türkçe/İngilizce arayüz",
+  "author": "deezwend",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node scripts/electron.js .",
+    "test:electron": "node scripts/electron.js test/electron-smoke.js",
+    "test": "node --test test/*.test.js",
+    "icons": "node scripts/build-icons.js",
+    "dist": "electron-builder --win portable",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/i18n.js && node --check src/language.js && node --check src/theme.js && node --check src/appearance.js && node --check src/duration.js"
+  },
+  "devDependencies": {
+    "electron": "40.10.6",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.deezwend.hideapp",
+    "productName": "HideApp",
+    "directories": { "output": "dist", "buildResources": "assets" },
+    "files": [
+      "src/**/*",
+      "native/**/*",
+      "assets/icon.png",
+      "assets/tray-icon.png",
+      "package.json"
+    ],
+    "asar": false,
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [{ "target": "portable", "arch": ["x64"] }]
+    },
+    "portable": {
+      "artifactName": "HideApp-${version}-portable.exe"
+    }
+  }
+}
