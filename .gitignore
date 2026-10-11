@@ -2,3 +2,4 @@ node_modules/
 .runtime/
 *.log
 dist/
+native/WindowHost.exe

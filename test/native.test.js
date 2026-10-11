@@ -5,7 +5,10 @@ const { createInterface } = require('node:readline');
 const path = require('node:path');
 
 function start(script, args = []) {
-  const process = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.resolve(script), ...args], { windowsHide: true, env: { ...globalThis.process.env, HIDEAPP_TEST: '1' } });
+  const nativeHelper = script === 'native/start.ps1';
+  const process = spawn(nativeHelper ? path.resolve('native/WindowHost.exe') : 'powershell.exe',
+    nativeHelper ? [String(globalThis.process.pid)] : ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.resolve(script), ...args],
+    { windowsHide: true, env: { ...globalThis.process.env, HIDEAPP_TEST: '1' } });
   const events = [];
   let stderr = '';
   process.stderr.on('data', data => { stderr += data; });

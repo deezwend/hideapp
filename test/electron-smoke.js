@@ -2,6 +2,16 @@ const { app, BrowserWindow, Tray } = require('electron');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const childProcess = require('node:child_process');
+const { createInterface } = require('node:readline');
+let nativeHelper;
+const originalSpawn = childProcess.spawn;
+childProcess.spawn = function (exe, args, options) {
+  const child = originalSpawn(exe, args, options);
+  if (path.basename(exe) === 'WindowHost.exe') nativeHelper = child;
+  return child;
+};
+process.env.HIDEAPP_TEST = '1';
 // Keep the smoke test independent of an already running HideApp instance.
 app.setPath('userData', path.join(app.getPath('temp'), 'hideapp-smoke-' + process.pid));
 // Capture the real tray/menu without exposing test-only renderer APIs.
@@ -19,8 +29,8 @@ Tray.prototype.setToolTip = function (value) {
   trayTooltip = value;
   return setToolTip.call(this, value);
 };
-require('../src/main');
-let timer = setTimeout(() => { console.error('Electron smoke test timed out'); app.exit(1); }, 40000);
+require(process.env.HIDEAPP_SMOKE_APP || '../src/main');
+let timer = setTimeout(() => { console.error('Electron smoke test timed out'); app.exit(1); }, 60000);
 app.whenReady().then(async () => {
   try {
     let window;
@@ -59,20 +69,47 @@ app.whenReady().then(async () => {
     assert.ok(applicationTray && !applicationTray.isDestroyed());
     assert.equal(trayMenu.getMenuItemById('toggle-hiding').enabled, true);
     assert.equal(trayMenu.getMenuItemById('restore-all').enabled, false);
-    // Both the custom X button and native close/Alt+F4 keep the process alive.
+    const waitForDestroyed = async previous => {
+      for (let attempt = 0; attempt < 40 && !previous.isDestroyed(); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(previous.isDestroyed(), true);
+      assert.equal(BrowserWindow.getAllWindows().length, 0);
+      assert.ok(applicationTray && !applicationTray.isDestroyed());
+    };
+    const waitForReopened = async () => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        window = BrowserWindow.getAllWindows()[0];
+        if (window && window.isVisible() && !window.webContents.isLoading()) {
+          try { if (await evaluate('Boolean(window.hideApp && window.hideAppView)')) return; } catch {}
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error('Tray window did not reopen');
+    };
+    // Both custom X and native close release the renderer while the tray stays alive.
+    window.setSize(800, 560);
+    await evaluate(`(() => {
+      document.querySelector('#search-bar').hidden = false;
+      document.querySelector('#app-search').value = 'persisted query';
+      document.querySelector('#app-search').focus();
+    })()`);
+    const previous = window;
     await evaluate('document.querySelector("#close").click()');
-    for (let attempt = 0; attempt < 30 && window.isVisible(); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    assert.equal(window.isVisible(), false);
-    assert.equal(window.isDestroyed(), false);
-    assert.equal((await evaluate('window.hideApp.getState()')).ready, true);
+    await waitForDestroyed(previous);
     trayMenu.getMenuItemById('show').click();
-    assert.equal(window.isVisible(), true);
+    await waitForReopened();
+    assert.equal((await evaluate('window.hideApp.getState()')).ready, true);
+    assert.equal(await evaluate('document.querySelector("#app-search").value'), 'persisted query');
+    assert.equal(await evaluate('document.querySelector("#search-bar").hidden'), false);
+    assert.equal(await evaluate('document.activeElement.id'), 'app-search');
+    assert.deepEqual(window.getSize(), [800, 560]);
+    await evaluate('document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
+    const second = window;
     window.close();
-    assert.equal(window.isVisible(), false);
+    await waitForDestroyed(second);
     applicationTray.emit('click');
-    assert.equal(window.isVisible(), true);
+    await waitForReopened();
     const toggleItem = trayMenu.getMenuItemById('toggle-hiding');
     assert.equal(toggleItem.checked, false);
     toggleItem.click(toggleItem);
@@ -394,6 +431,59 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate('document.documentElement.lang'), 'tr');
     assert.equal(await evaluate('document.querySelector("#empty h3").textContent'), 'Henüz gizlenen uygulama yok');
     assert.equal(trayMenu.getMenuItemById('quit').label, 'HideApp’i kapat');
+    // Real native state must survive a renderer-free tray session. The
+    // fixture seam cannot target user windows and only exists in test mode.
+    const fixture = childProcess.spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(__dirname, 'fixture.ps1')], { windowsHide: true });
+    const fixtureLines = [];
+    createInterface({ input: fixture.stdout }).on('line', line => fixtureLines.push(line));
+    const fixtureLine = async prefix => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const index = fixtureLines.findIndex(line => line.startsWith(prefix));
+        if (index >= 0) return fixtureLines.splice(index, 1)[0];
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+      throw new Error('Fixture response timed out: ' + prefix);
+    };
+    try {
+      const fixtureId = (await fixtureLine('ready=')).slice(6);
+      assert.ok(nativeHelper);
+      await evaluate('window.hideApp.setEnabled(true)');
+      const backgroundWindow = window;
+      window.close();
+      await waitForDestroyed(backgroundWindow);
+      nativeHelper.stdin.write('test-hide ' + fixtureId + '\n');
+      for (let attempt = 0; attempt < 80 && !trayMenu.getMenuItemById('restore-all').enabled; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(trayMenu.getMenuItemById('restore-all').enabled, true);
+      assert.equal(BrowserWindow.getAllWindows().length, 0);
+      fixture.stdin.write('visible\n');
+      await fixtureLine('hidden');
+      applicationTray.emit('click');
+      await waitForReopened();
+      const backgroundState = await evaluate('window.hideApp.getState()');
+      assert.equal(backgroundState.windows.length, 1);
+      assert.equal(backgroundState.windows[0].id, fixtureId);
+      for (let attempt = 0; attempt < 60 && !(await evaluate('Boolean(document.querySelector("#windows tr"))')); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(await evaluate('document.querySelector(".app-title").textContent'), 'HideApp integration fixture');
+      const restoreWindow = window;
+      window.close();
+      await waitForDestroyed(restoreWindow);
+      trayMenu.getMenuItemById('restore-all').click();
+      for (let attempt = 0; attempt < 80 && trayMenu.getMenuItemById('restore-all').enabled; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(trayMenu.getMenuItemById('restore-all').enabled, false);
+      fixture.stdin.write('visible\n');
+      await fixtureLine('visible');
+      applicationTray.emit('click');
+      await waitForReopened();
+      assert.equal((await evaluate('window.hideApp.getState()')).windows.length, 0);
+      await evaluate('window.hideApp.setEnabled(false)');
+    } finally { fixture.stdin.end('quit\n'); }
     window.setSize(920, 640);
     await new Promise(resolve => setTimeout(resolve, 100));
     // Diagnostic screenshot is optional on occluded/headless desktops.
@@ -409,7 +499,7 @@ app.whenReady().then(async () => {
       assert.equal(applicationTray.isDestroyed(), true);
       clearTimeout(timer);
     });
-    console.log('Electron smoke passed: Turkish/English switching, persisted language, localized tray and timers, tray close-to-hide, show menu, activation menu, quit cleanup, live hidden durations without row rebuild, column dividers, themed search highlights, arrow/keyboard navigation, Ctrl+F, Unicode matching, live filtering, Escape/close, minimized list rendering, IPC, helper, toggle, six palettes in light/dark modes, font, independent scaling, persistence, reset and small-window layout.');
+    console.log('Electron smoke passed: renderer release/recreation, preserved search/focus/geometry, Turkish/English switching, persisted language, localized tray and timers, show menu, activation menu, quit cleanup, live hidden durations without row rebuild, column dividers, themed search highlights, arrow/keyboard navigation, Ctrl+F, Unicode matching, live filtering, Escape/close, minimized list rendering, IPC, helper, toggle, six palettes in light/dark modes, font, independent scaling, persistence, reset and small-window layout.');
     trayMenu.getMenuItemById('quit').click();
   } catch (error) {
     console.error(error);

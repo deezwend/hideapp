@@ -204,4 +204,24 @@ api.onMaximized(value => {
 // Language changes re-render the whole list, including timers and labels.
 window.addEventListener('language-changed', () => render(current));
 api.onState(render);
-api.getState().then(render);
+window.hideAppView = {
+  capture: () => ({
+    query: searchInput.value, searchOpen: !searchBar.hidden, activeSearchId,
+    scrollTop: document.querySelector('.table-surface').scrollTop,
+    focusId: document.activeElement?.id || null,
+    appearanceOpen: document.querySelector('#appearance-dialog').open,
+  }),
+};
+Promise.all([api.getState(), api.getViewState()]).then(([state, view]) => {
+  if (view) {
+    searchInput.value = view.query || '';
+    searchBar.hidden = !view.searchOpen;
+    activeSearchId = view.activeSearchId;
+  }
+  render(state);
+  if (view) {
+    if (view.appearanceOpen) document.querySelector('#appearance-dialog').showModal();
+    document.getElementById(view.focusId)?.focus({ preventScroll: true });
+    document.querySelector('.table-surface').scrollTop = view.scrollTop || 0;
+  }
+});

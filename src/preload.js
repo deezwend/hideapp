@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('hideApp', {
   getState: () => ipcRenderer.invoke('get-state'),
+  getViewState: () => ipcRenderer.invoke('get-view-state'),
   getLanguage: () => ipcRenderer.invoke('get-language'),
   setLanguage: language => ipcRenderer.invoke('set-language', language),
   setEnabled: enabled => ipcRenderer.invoke('enable', enabled),

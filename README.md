@@ -1,6 +1,6 @@
 # HideApp
 
-Windows'ta çalışan pencereleri, işlemi sonlandırmadan gizleyen küçük bir masaüstü aracı. Electron arayüzü + PowerShell/.NET yardımcı süreci ile çalışır. Arayüz **Türkçe** ve **English** dillerini destekler.
+Windows'ta çalışan pencereleri, işlemi sonlandırmadan gizleyen küçük bir masaüstü aracı. Electron arayüzü + önceden derlenmiş C#/.NET yardımcı süreci ile çalışır. Arayüz **Türkçe** ve **English** dillerini destekler.
 
 **Diller / Languages:** [Türkçe](#türkçe) · [English](#english)
 
@@ -50,11 +50,13 @@ En kolay yol: [Releases](https://github.com/deezwend/hideapp/releases) sayfasın
 - **Kurulum gerekmez.** Tek dosyadır; çalıştırdığınızda kendini geçici bir klasöre açar ve uygulamayı başlatır. Program Files'a, kayıt defterine veya başlangıç öğelerine hiçbir şey yazmaz.
 - **Taşınabilir.** Dosyayı USB belleğe veya herhangi bir klasöre kopyalayıp çalıştırabilirsiniz.
 - **Yönetici hakları gerekmez.** (Yönetici olarak çalışan pencereleri gizlemek isterseniz HideApp'i de yönetici olarak başlatmanız gerekir.)
-- **İlk açılış birkaç saniye sürebilir:** portable paket geçici klasöre açılır ve yerel yardımcı süreç (C#) ilk kez derlenir.
+- **İlk açılış birkaç saniye sürebilir:** portable paket geçici klasöre açılır. C# yardımcısı pakette hazır bulunur; açılışta derleme yapılmaz.
 
 > **Önemli:** Yayınlanan `.exe` dosyaları **kod imzalı değildir**. Windows SmartScreen ilk çalıştırmada "Windows bilgisayarınızı korudu" uyarısını gösterebilir. Devam etmek için **Ek bilgi → Yine de çalıştır** seçeneğini kullanın.
 
-Portable sürüm yalnızca **64 bit Windows 10/11** içindir ve sistemde **Windows PowerShell 5.1** (.NET Framework ile birlikte gelir) bulunmalıdır.
+Portable sürüm yalnızca **64 bit Windows 10/11** içindir ve **.NET Framework 4.x** kullanır. Çalışırken PowerShell süreci başlatmaz.
+
+RAM tüketimini azaltmak için tepsiye geçince arayüz süreci kapatılır; pencere gizleme yardımcısı ve tepsi çalışmaya devam eder. Arayüz yeniden açıldığında arama, odak, pencere boyutu ve ayarlar korunur. Varsayılan olarak yazılımsal çizim kullanılır; donanım hızlandırmasını tercih etmek için `HIDEAPP_HARDWARE_ACCELERATION=1` ortam değişkeniyle başlatabilirsiniz. [RAM ölçüm raporu](docs/ram-analysis.md).
 
 ### Kullanım
 
@@ -136,7 +138,7 @@ npm install
 npm start
 ```
 
-`npm install` Electron'u indirir. İlk açılışta yerel yardımcı süreç (C# kaynağı) derlendiği için birkaç saniye beklemek normaldir; sonraki açılışlar hızlıdır.
+`npm install` Electron'u indirir. `npm start`, testler ve `npm run dist` öncesinde yardımcı C# kodu Windows'un .NET Framework derleyicisiyle derlenir. Dağıtılan portable pakette yardımcı hazırdır.
 
 ### Portable `.exe` derleme
 
@@ -159,7 +161,7 @@ Ek komutlar:
 
 Derleme notları:
 
-- Paket **asar arşivi kullanmaz** (`"asar": false`). Nedeni: yardımcı süreç, `native/start.ps1` ve `native/WindowHost.cs` dosyalarını PowerShell ile diskten okumak zorundadır; asar içindeki dosyalar PowerShell tarafından okunamaz.
+- Paket **asar arşivi kullanmaz** (`"asar": false`). `native/WindowHost.exe` gerçek bir dosya olarak paketlenir ve doğrudan çalıştırılır.
 - Paketlenen dosyalar: `src/**`, `native/**`, `assets/icon.png`, `assets/tray-icon.png` ve `package.json`.
 - İlk derlemede `electron-builder` Electron dağıtımını indirir (önbelleğe alınır).
 - Kod imzalama sertifikası tanımlı değildir; üretilen `.exe` imzasızdır.
@@ -176,7 +178,7 @@ Derleme notları:
                │  satır tabanlı JSON protokolü (stdin/stdout)
                ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  PowerShell yardımcı süreç: native/start.ps1 → native/WindowHost.cs (C#)      │
+│  Derlenmiş C# yardımcı süreç: native/WindowHost.exe                          │
 │  Win32 API: pencere numaralandırma, ShowWindow ile gizleme/geri getirme,     │
 │  kapatma düğmesi izleme, pencere ikonu çıkarma                              │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -192,7 +194,7 @@ Derleme notları:
 ```
 assets/     ikon kaynağı ve türetilmiş ikonlar (icon-source.png, icon.png, tray-icon.png, icon.ico)
 docs/       README ekran görüntüsü
-native/     PowerShell girişi (start.ps1) ve C# pencere yardımcısı (WindowHost.cs)
+native/     C# pencere yardımcısı (WindowHost.cs, Entry.cs → WindowHost.exe)
 scripts/    electron çalıştırıcısı ve ikon üreticisi
 src/        Electron ana süreç, preload, arayüz, stil, tema/dil/süre modülleri
 test/       Node testleri, Electron duman testi, PowerShell fixture'ları
@@ -205,7 +207,7 @@ test/       Node testleri, Electron duman testi, PowerShell fixture'ları
 - Gizlenen bir **pencere**dir, tüm uygulama işlemi değil. Aynı uygulamanın başka pencereleri ve sistem tepsisi ikonları görünür kalabilir.
 - Gizleme bir güvenlik veya gizlilik sınırı değildir. İşlemler Görev Yöneticisi'nde görünür ve uygulama bildirim gönderebilir veya kendini tekrar gösterebilir.
 - Yardımcı süreci zorla sonlandırmak otomatik geri getirmeyi engelleyebilir. Normal çıkış için sistem tepsisi menüsündeki **HideApp'i kapat** seçeneğini kullanın.
-- .NET Framework/PowerShell yalnızca Windows API yardımcı sürecini çalıştırır; arayüz Electron'dur. İlk açılışta yerel yardımcı kaynak derlenirken birkaç saniye beklemek normaldir.
+- .NET Framework yalnızca Windows API yardımcı sürecini çalıştırır; arayüz Electron'dur. Yardımcı paketleme sırasında derlenir.
 - Uygulama yalnızca Windows içindir; diğer platformlarda arayüz açılır ama gizleme çalışmaz ve durum alanında "yalnızca Windows" uyarısı görünür.
 
 ### Sorun giderme
@@ -216,8 +218,8 @@ test/       Node testleri, Electron duman testi, PowerShell fixture'ları
 | Liste boş ve durum alanında `helperStopped` benzeri bir hata | Yardımcı süreç kapanmış. HideApp'i kapatıp yeniden açın |
 | Hiçbir pencere gizlenmiyor | **Uygulamaları gizlemeyi aktifleştir** açık mı? Gizleme için kapatma düğmesine **Shift + sağ tık** gerekir (normal tıklama değil) |
 | Yönetici pencereleri gizlenmiyor | HideApp'i yönetici olarak çalıştırın |
-| İlk açılış birkaç saniye sürüyor | Yardımcı süreç C# kaynağı derleniyor; sonraki açılışlar hızlıdır |
-| Antivirüs uyarısı | İmzasız, PowerShell üzerinden C# derleyen bir araç olduğu için yanlış pozitif olabilir; dosyayı dışlayabilir veya kaynak koddan derleyebilirsiniz |
+| İlk açılış birkaç saniye sürüyor | Portable paket geçici klasöre açılıyor; yardımcı süreç zaten derlenmiştir |
+| Antivirüs uyarısı | İmzasız paket yanlış pozitif uyarı alabilir; dosyanın kaynağını ve release SHA-256 değerini doğrulayın veya kaynak koddan derleyin |
 | Portable `.exe` her açılışta yavaş | Portable paket kendini `%TEMP%` klasörüne açar; bu normaldir. Hızlı açılış isterseniz `dist/win-unpacked/HideApp.exe` gibi açılmış sürümü kullanın |
 
 ### Doğrulama ve testler
@@ -276,11 +278,13 @@ The easiest path: download **`HideApp-<version>-portable.exe`** from the [Releas
 - **No installation.** It is a single file that unpacks itself into a temporary folder and starts the app. Nothing is written to Program Files, the registry or startup entries.
 - **Truly portable.** Copy the file to a USB stick or any folder and run it.
 - **No administrator rights required.** (To hide windows that run elevated, start HideApp elevated as well.)
-- **The first launch can take a few seconds:** the portable package unpacks to a temporary folder and the native helper (C#) is compiled on first run.
+- **The first launch can take a few seconds:** the portable package unpacks to a temporary folder. The C# helper is already compiled; no startup compilation occurs.
 
 > **Important:** the published `.exe` files are **not code signed**. Windows SmartScreen may show "Windows protected your PC" on first launch. Choose **More info → Run anyway** to continue.
 
-The portable build targets **64-bit Windows 10/11** and requires **Windows PowerShell 5.1** (ships with the .NET Framework).
+The portable build targets **64-bit Windows 10/11** and uses **.NET Framework 4.x**. It does not launch PowerShell at runtime.
+
+To reduce RAM usage, moving to the tray releases the UI process while the helper and tray remain active. Search, focus, window size and settings survive reopening. Software drawing is the default; launch with the `HIDEAPP_HARDWARE_ACCELERATION=1` environment variable to opt into hardware acceleration. [RAM measurement report](docs/ram-analysis.md).
 
 ### Usage
 
@@ -362,7 +366,7 @@ npm install
 npm start
 ```
 
-`npm install` downloads Electron. The first launch compiles the native helper (C# source), so a few seconds of waiting is expected; later launches are fast.
+`npm install` downloads Electron. `npm start`, tests and `npm run dist` compile the helper using the Windows .NET Framework compiler. The distributed portable package includes the compiled helper.
 
 ### Building the portable `.exe`
 
@@ -385,7 +389,7 @@ Additional commands:
 
 Build notes:
 
-- The package deliberately **does not use an asar archive** (`"asar": false`). The helper must read `native/start.ps1` and `native/WindowHost.cs` from disk with PowerShell, and files inside an asar archive cannot be read by PowerShell.
+- The package **does not use an asar archive** (`"asar": false`). `native/WindowHost.exe` is packaged as a real file and launched directly.
 - Packaged files: `src/**`, `native/**`, `assets/icon.png`, `assets/tray-icon.png` and `package.json`.
 - The first build downloads the Electron distribution with `electron-builder` (cached afterwards).
 - No code signing certificate is configured, so the produced `.exe` is unsigned.
@@ -402,7 +406,7 @@ Build notes:
                │  line-based JSON protocol (stdin/stdout)
                ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  PowerShell helper: native/start.ps1 → native/WindowHost.cs (C#)             │
+│  Compiled C# helper: native/WindowHost.exe                                  │
 │  Win32 API: window enumeration, hide/restore via ShowWindow,                │
 │  close-button watching, window icon extraction                              │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -418,7 +422,7 @@ Build notes:
 ```
 assets/     icon source and derived icons (icon-source.png, icon.png, tray-icon.png, icon.ico)
 docs/       README screenshot
-native/     PowerShell entry point (start.ps1) and C# window helper (WindowHost.cs)
+native/     C# window helper (WindowHost.cs, Entry.cs → WindowHost.exe)
 scripts/    Electron launcher and icon generator
 src/        Electron main process, preload, UI, styles, theme/language/duration modules
 test/       Node tests, Electron smoke test, PowerShell fixtures
@@ -431,7 +435,7 @@ test/       Node tests, Electron smoke test, PowerShell fixtures
 - A **window** is hidden, not the whole application process. Other windows of the same application and its tray icons may stay visible.
 - Hiding is not a security or privacy boundary. Processes remain visible in Task Manager and an application can still post notifications or show itself again.
 - Force-killing the helper process can prevent automatic restore. Use **Quit HideApp** from the tray menu for a clean exit.
-- The .NET Framework/PowerShell part only runs the Windows API helper; the UI is Electron. Waiting a few seconds while the native helper is compiled on first launch is normal.
+- .NET Framework runs the Windows API helper; the UI is Electron. The helper is compiled when building the package.
 - The app is Windows-only; on other platforms the UI opens but hiding does nothing and a "Windows only" warning appears in the status area.
 
 ### Troubleshooting
@@ -442,8 +446,8 @@ test/       Node tests, Electron smoke test, PowerShell fixtures
 | Empty list with a `helperStopped`-like error in the status area | The helper process exited. Close HideApp and start it again |
 | Nothing gets hidden | Is **Enable application hiding** on? Hiding needs a **Shift + right click** on the close button (a normal click does not work) |
 | Elevated windows are not hidden | Run HideApp as administrator |
-| The first launch takes a few seconds | The C# helper source is being compiled; later launches are fast |
-| Antivirus warning | Expected false positive for an unsigned tool that compiles C# through PowerShell; exclude the file or build from source |
+| The first launch takes a few seconds | The portable package is unpacking into a temporary folder; the helper is already compiled |
+| Antivirus warning | An unsigned package may trigger a false positive; verify its origin and release SHA-256 or build from source |
 | The portable `.exe` is slow on every launch | The portable package unpacks itself into `%TEMP%`; this is normal. For fast startup use an unpacked build such as `dist/win-unpacked/HideApp.exe` |
 
 ### Verification and tests

@@ -6,11 +6,14 @@
   "author": "deezwend",
   "main": "src/main.js",
   "scripts": {
+    "prestart": "node scripts/build-helper.js",
     "start": "node scripts/electron.js .",
+    "pretest:electron": "node scripts/build-helper.js",
     "test:electron": "node scripts/electron.js test/electron-smoke.js",
+    "pretest": "node scripts/build-helper.js",
     "test": "node --test test/*.test.js",
     "icons": "node scripts/build-icons.js",
-    "dist": "electron-builder --win portable",
+    "dist": "node scripts/build-helper.js && electron-builder --win portable --publish never",
     "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/i18n.js && node --check src/language.js && node --check src/theme.js && node --check src/appearance.js && node --check src/duration.js"
   },
   "devDependencies": {

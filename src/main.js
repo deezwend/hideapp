@@ -16,6 +16,14 @@ let language = 'tr';
 let errorCode = null;
 let errorExtra = '';
 let state = { enabled: false, windows: [], ready: false, error: null };
+let viewState = null;
+let windowBounds = null;
+let windowMaximized = false;
+let closeGeneration = 0;
+
+// This utility has no 3D content. Software drawing reduces the GPU process'
+// memory footprint; allow an opt-out for machines that prefer GPU drawing.
+if (process.env.HIDEAPP_HARDWARE_ACCELERATION !== '1') app.disableHardwareAcceleration();
 
 const L = (key, params) => i18n.translate(language, key, params);
 function languageFile() { return path.join(app.getPath('userData'), 'language.json'); }
@@ -33,10 +41,57 @@ function applyError() {
 function setError(code, extra = '') { errorCode = code; errorExtra = extra; applyError(); }
 
 function showWindow() {
-  if (!window || window.isDestroyed() || quitting) return;
+  if (quitting) return;
+  closeGeneration++;
+  if (!window || window.isDestroyed()) { createWindow(); return; }
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
+}
+function createWindow() {
+  const created = new BrowserWindow({
+    ...(windowBounds || { width: 920, height: 640 }), minWidth: 640, minHeight: 430,
+    frame: false, backgroundColor: '#f6f7fb', show: false,
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true,
+      // A taskbar-minimized window still receives live list updates.
+      backgroundThrottling: false,
+    },
+  });
+  window = created;
+  created.on('close', async event => {
+    if (quitting) return;
+    event.preventDefault();
+    const generation = ++closeGeneration;
+    windowBounds = created.getNormalBounds();
+    windowMaximized = created.isMaximized();
+    created.hide();
+    // Capture transient UI state before releasing its renderer. Bound the
+    // wait so an unresponsive renderer cannot keep consuming RAM forever.
+    let captureTimer;
+    try {
+      const captured = await Promise.race([
+        created.webContents.executeJavaScript('window.hideAppView?.capture()'),
+        new Promise(resolve => { captureTimer = setTimeout(() => resolve(null), 300); }),
+      ]);
+      if (generation === closeGeneration && captured) viewState = captured;
+    } catch { /* Keep the previous view if the renderer has stopped. */ }
+    finally { clearTimeout(captureTimer); }
+    if (generation === closeGeneration && !created.isDestroyed() && !quitting) created.destroy();
+  });
+  created.on('closed', () => { if (window === created) window = null; });
+  created.once('ready-to-show', () => {
+    if (quitting || created.isDestroyed()) return;
+    if (windowMaximized) created.maximize();
+    created.show();
+    created.focus();
+  });
+  created.on('maximize', () => created.webContents.send('maximized', true));
+  created.on('unmaximize', () => created.webContents.send('maximized', false));
+  created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  created.webContents.on('will-navigate', event => event.preventDefault());
+  created.loadFile(path.join(__dirname, 'index.html'));
 }
 function refreshTray() {
   if (!tray || tray.isDestroyed()) return;
@@ -67,10 +122,8 @@ function startHelper() {
     publish();
     return;
   }
-  helper = spawn('powershell.exe', [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', path.join(__dirname, '..', 'native', 'start.ps1'), '-OwnerPid', String(process.pid),
-  ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  helper = spawn(path.join(__dirname, '..', 'native', 'WindowHost.exe'), [String(process.pid)],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let diagnostics = '';
   helper.stderr.on('data', data => { diagnostics = (diagnostics + data.toString()).slice(-4000); });
   helper.stdin.on('error', () => {});
@@ -86,7 +139,7 @@ function startHelper() {
         setError(event.code ?? 'hideFailed');
       }
       publish();
-    } catch { /* PowerShell startup output is not protocol data. */ }
+    } catch { /* Ignore non-protocol output from the helper. */ }
   });
   helper.on('error', error => {
     state = { ...state, ready: false, enabled: false };
@@ -108,37 +161,17 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showWindow);
   app.whenReady().then(() => {
     loadLanguage();
-    window = new BrowserWindow({
-      width: 920, height: 640, minWidth: 640, minHeight: 430,
-      frame: false, backgroundColor: '#f6f7fb', show: false,
-      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true,
-        // Hidden-window events must update the list even while HideApp is
-        // unfocused, covered by another application, or minimized.
-        backgroundThrottling: false,
-      },
-    });
+    createWindow();
     const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'tray-icon.png'));
     tray = new Tray(icon);
     tray.on('click', showWindow);
     tray.on('double-click', showWindow);
     refreshTray();
-    window.on('close', event => {
-      if (quitting) return;
-      event.preventDefault();
-      window.hide();
-    });
-    window.loadFile(path.join(__dirname, 'index.html'));
-    window.once('ready-to-show', () => window.show());
-    window.on('maximize', () => window.webContents.send('maximized', true));
-    window.on('unmaximize', () => window.webContents.send('maximized', false));
-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    window.webContents.on('will-navigate', event => event.preventDefault());
     startHelper();
   });
 }
 ipcMain.handle('get-state', () => state);
+ipcMain.handle('get-view-state', () => viewState);
 ipcMain.handle('enable', (_event, enabled) => {
   if (typeof enabled !== 'boolean') return false;
   errorCode = null;
@@ -163,7 +196,7 @@ ipcMain.handle('restore', (_event, id) => {
 });
 ipcMain.handle('restore-all', () => send('restore-all'));
 ipcMain.on('window-control', (_event, action) => {
-  if (!window) return;
+  if (!window || window.isDestroyed()) return;
   if (action === 'minimize') window.minimize();
   else if (action === 'maximize') window.isMaximized() ? window.unmaximize() : window.maximize();
   else if (action === 'close') window.close();
@@ -184,4 +217,5 @@ app.on('before-quit', event => {
 app.on('will-quit', () => {
   if (tray && !tray.isDestroyed()) tray.destroy();
 });
-app.on('window-all-closed', () => app.quit());
+// The tray and native helper own the background lifetime, independent of UI.
+app.on('window-all-closed', () => {});
