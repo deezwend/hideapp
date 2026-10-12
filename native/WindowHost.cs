@@ -43,8 +43,9 @@ public static class WindowHost
     static readonly JavaScriptSerializer json = new JavaScriptSerializer();
     static HookProc callback = OnMouse;
     static IntPtr hook;
-    static Form dispatcher;
-    static bool enabled, swallowRelease;
+    static Form dispatcher, mouseDispatcher;
+    static volatile bool enabled;
+    static bool swallowRelease;
     static int owner;
 
     static void Emit(object value) { Console.WriteLine(json.Serialize(value)); Console.Out.Flush(); }
@@ -74,21 +75,28 @@ public static class WindowHost
     public static bool IsCustomCloseRegion(string windowClass, int hit, int x, int y,
         int left, int top, int right, int bottom, uint dpi, bool fullscreen)
     {
-        if (fullscreen || hit != 1 || String.IsNullOrEmpty(windowClass) ||
+        // Zero denotes an unanswered hit test, not a successful HTNOWHERE.
+        if (fullscreen || (hit != 1 && hit != 0) || String.IsNullOrEmpty(windowClass) ||
             !windowClass.StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return false;
         double scale = (dpi == 0 ? 96 : dpi) / 96.0;
         int width = (int)Math.Ceiling(28 * scale), height = (int)Math.Ceiling(32 * scale);
         if (right - left < width * 3 || bottom - top < height * 2) return false;
         return x >= right - width && x < right && y >= top && y < top + height;
     }
-    static bool IsCloseButton(IntPtr window, Point point)
+    static bool IsCloseButton(IntPtr window, IntPtr hitWindow, Point point)
     {
         long packed = ((long)(ushort)point.Y << 16) | (ushort)point.X;
         UIntPtr hit;
+        // Windows Terminal's DRAG_BAR_WINDOW_CLASS child owns caption hit
+        // testing. Query the actual input window before falling back to its root.
+        // Always hide the root, never the titlebar/XAML child itself.
+        if (hitWindow != IntPtr.Zero && hitWindow != window && GetAncestor(hitWindow, 2) == window) {
+            IntPtr childOk = SendMessageTimeout(hitWindow, 0x84, IntPtr.Zero, new IntPtr(packed), 2, 50, out hit);
+            if (childOk != IntPtr.Zero && hit.ToUInt64() == 20) return true;
+        }
         IntPtr ok = SendMessageTimeout(window, 0x84, IntPtr.Zero, new IntPtr(packed), 2, 50, out hit);
-        if (ok == IntPtr.Zero) return false;
-        if (hit.ToUInt64() == 20) return true;
-        if (hit.ToUInt64() != 1) return false;
+        if (ok != IntPtr.Zero && hit.ToUInt64() == 20) return true;
+        if (ok != IntPtr.Zero && hit.ToUInt64() != 1) return false;
         StringBuilder name = new StringBuilder(128);
         GetClassName(window, name, name.Capacity);
         if (!name.ToString().StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return false;
@@ -101,7 +109,9 @@ public static class WindowHost
         bool fullscreen = !IsZoomed(window) && GetMonitorInfo(MonitorFromWindow(window, 2), ref monitor) &&
             bounds.Left <= monitor.Monitor.Left && bounds.Top <= monitor.Monitor.Top &&
             bounds.Right >= monitor.Monitor.Right && bounds.Bottom >= monitor.Monitor.Bottom;
-        return IsCustomCloseRegion(name.ToString(), 1, point.X, point.Y,
+        // Electron can briefly stop answering during activation. In that case
+        // retain the same conservative class/geometry/fullscreen checks.
+        return IsCustomCloseRegion(name.ToString(), ok == IntPtr.Zero ? 0 : 1, point.X, point.Y,
             bounds.Left, bounds.Top, bounds.Right, bounds.Bottom, GetDpiForWindow(window), fullscreen);
     }
     static IntPtr OnMouse(int code, IntPtr message, IntPtr data)
@@ -111,11 +121,12 @@ public static class WindowHost
             if (msg == 0x205 && swallowRelease) { swallowRelease = false; return new IntPtr(1); }
             if (msg == 0x204 && enabled && (GetAsyncKeyState(0x10) & 0x8000) != 0) {
                 MouseData mouse = (MouseData)Marshal.PtrToStructure(data, typeof(MouseData));
-                IntPtr window = GetAncestor(WindowFromPoint(mouse.Point), 2);
+                IntPtr hitWindow = WindowFromPoint(mouse.Point);
+                IntPtr window = GetAncestor(hitWindow, 2);
                 uint process;
                 GetWindowThreadProcessId(window, out process);
                 if (window != IntPtr.Zero && process != owner && IsWindowVisible(window)) {
-                    if (IsCloseButton(window, mouse.Point)) {
+                    if (IsCloseButton(window, hitWindow, mouse.Point)) {
                         swallowRelease = true;
                         dispatcher.BeginInvoke((Action)(() => Hide(window)));
                         return new IntPtr(1);
@@ -173,8 +184,29 @@ public static class WindowHost
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         dispatcher = new Form();
         IntPtr handle = dispatcher.Handle;
-        hook = SetWindowsHookEx(14, callback, GetModuleHandle(null), 0);
-        if (hook == IntPtr.Zero) throw new InvalidOperationException("Windows fare kancası kurulamadı.");
+        // A low-level hook must keep pumping even while another application's
+        // ShowWindow, icon lookup or state publication is blocking our dispatcher.
+        // Otherwise consecutive clicks time out and Windows can remove the hook.
+        Exception hookError = null;
+        using (ManualResetEvent started = new ManualResetEvent(false)) {
+            Thread mouseThread = new Thread(() => {
+                try {
+                    mouseDispatcher = new Form();
+                    IntPtr mouseHandle = mouseDispatcher.Handle;
+                    hook = SetWindowsHookEx(14, callback, GetModuleHandle(null), 0);
+                    if (hook == IntPtr.Zero) throw new InvalidOperationException("Windows fare kancası kurulamadı.");
+                } catch (Exception error) { hookError = error; }
+                finally { started.Set(); }
+                if (hookError != null) { if (mouseDispatcher != null) mouseDispatcher.Dispose(); return; }
+                try { Application.Run(); }
+                finally { UnhookWindowsHookEx(hook); mouseDispatcher.Dispose(); }
+            });
+            mouseThread.IsBackground = true;
+            mouseThread.SetApartmentState(ApartmentState.STA);
+            mouseThread.Start();
+            started.WaitOne();
+        }
+        if (hookError != null) throw hookError;
         System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
         timer.Interval = 1500;
         timer.Tick += delegate {
@@ -188,7 +220,14 @@ public static class WindowHost
                 string line;
                 while ((line = Console.ReadLine()) != null) {
                     string command = line;
-                    dispatcher.BeginInvoke((Action)(() => Command(command)));
+                    // Probe the hook's message pump without injecting input into
+                    // the user's desktop (also works on a locked test machine).
+                    if (command == "test-hook-ping" && Environment.GetEnvironmentVariable("HIDEAPP_TEST") == "1") {
+                        mouseDispatcher.BeginInvoke((Action)(() => {
+                            Console.WriteLine("{\"type\":\"hook-pong\"}");
+                            Console.Out.Flush();
+                        }));
+                    } else dispatcher.BeginInvoke((Action)(() => Command(command)));
                 }
             } catch { }
             try { dispatcher.BeginInvoke((Action)(() => { RestoreAll(); Application.ExitThread(); })); } catch { }
@@ -198,6 +237,12 @@ public static class WindowHost
         Emit(new { type = "ready" });
         Publish();
         try { Application.Run(); }
-        finally { timer.Dispose(); RestoreAll(); UnhookWindowsHookEx(hook); dispatcher.Dispose(); }
+        finally {
+            enabled = false;
+            timer.Dispose();
+            mouseDispatcher.Invoke((Action)(() => Application.ExitThread()));
+            RestoreAll();
+            dispatcher.Dispose();
+        }
     }
 }

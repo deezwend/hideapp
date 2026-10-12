@@ -44,6 +44,34 @@ async function expectVisibility(fixture, expected) {
   throw new Error('Window never became ' + expected);
 }
 
+test('Mouse hook stays responsive while ShowWindow blocks, then both windows hide and restore', { skip: process.platform !== 'win32', timeout: 25000 }, async t => {
+  const helper = start('native/start.ps1');
+  const first = start('test/fixture.ps1', ['-SlowHide']);
+  const second = start('test/fixture.ps1', ['-X', '600']);
+  t.after(() => {
+    for (const child of [helper, first, second]) {
+      if (child.process.exitCode === null) child.process.stdin.end('quit\n');
+    }
+  });
+  await helper.wait(event => event.type === 'ready');
+  const firstId = (await first.wait(event => typeof event === 'string' && event.startsWith('ready='))).slice(6);
+  const secondId = (await second.wait(event => typeof event === 'string' && event.startsWith('ready='))).slice(6);
+  helper.send('enable 1');
+  await helper.wait(event => event.type === 'state' && event.enabled);
+  helper.send('test-hide ' + firstId);
+  await first.wait(event => event === 'hiding');
+  helper.send('test-hook-ping');
+  await helper.wait(event => event.type === 'hook-pong', 700);
+  helper.send('test-hide ' + secondId);
+  const state = await helper.wait(event => event.type === 'state' && event.windows.length === 2);
+  assert.deepEqual(state.windows.map(window => window.id).sort(), [firstId, secondId].sort());
+  await expectVisibility(second, 'hidden');
+  helper.send('restore-all');
+  await helper.wait(event => event.type === 'state' && event.windows.length === 0);
+  await expectVisibility(first, 'visible');
+  await expectVisibility(second, 'visible');
+});
+
 test('Native hidden timestamp survives state publications', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
   const helper = start('native/start.ps1', ['-OwnerPid', String(process.pid)]);
   const fixture = start('test/fixture.ps1');

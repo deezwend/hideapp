@@ -4,7 +4,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const path = require('node:path');
 
-test('Chromium close region respects DPI, neighbours, content, class and fullscreen', { skip: process.platform !== 'win32' }, async () => {
+test('Close detection supports Terminal child routing and conservative Chromium regions', { skip: process.platform !== 'win32' }, async () => {
   const { stdout } = await promisify(execFile)('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', path.join(__dirname, 'close-button.ps1'),
